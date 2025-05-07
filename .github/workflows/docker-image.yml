@@ -18,7 +18,7 @@ env:
 
 jobs:
   build:
-    if: ${{ ! startsWith(HEAD_COMMIT_MESSAGE, 'Merge branch ') }}
+    if: ${{ ! startsWith(env.HEAD_COMMIT_MESSAGE, 'Merge branch ') }}
     runs-on: ubuntu-latest
     outputs:
       ANSIBLE_FILES: ${{ steps.listo_files.outputs.ANSIBLE_FILES }}
@@ -63,7 +63,7 @@ jobs:
 
   test_deploy_linux:
     if: |
-      ${{ ! startsWith(HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
+      ${{ ! startsWith(env.HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
     needs: build
@@ -109,7 +109,7 @@ jobs:
 
   test_deploy_simulator:
     if: |
-      ${{ ! startsWith(HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
+      ${{ ! startsWith(env.HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
     needs: build
@@ -155,7 +155,7 @@ jobs:
 
   test_deploy_snapshots:
     if: |
-      ${{ ! startsWith(HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
+      ${{ ! startsWith(env.HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
     needs: build
@@ -201,7 +201,7 @@ jobs:
 
   test_deploy_em7lic:
     if: |
-      ${{ ! startsWith(HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
+      ${{ ! startsWith(env.HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
     needs: build
@@ -247,7 +247,7 @@ jobs:
 
   test_deploy_cms_build:
     if: |
-      ${{ ! startsWith(HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
+      ${{ ! startsWith(env.HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
     needs: build
@@ -294,7 +294,7 @@ jobs:
   create_release:
     if: |
       always() &&
-      ${{ ! startsWith(HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
+      ${{ ! startsWith(env.HEAD_COMMIT_MESSAGE, 'Merge branch ') }} &&
       needs.build.result == 'success' &&
       (needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped') &&
       (needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped') &&
