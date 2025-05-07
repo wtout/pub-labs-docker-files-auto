@@ -14,11 +14,20 @@ env:
   REGISTRY_USER: ${{ vars.DOCKERHUB_USERNAME }}
   REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
   IMAGE_REGISTRY: registry-1.docker.io
+  HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
 
 jobs:
-  build:
-    if: ${{ ! startsWith(github.event.head_commit.message, 'Merge branch ') }}
+  prepare-head-message:
     runs-on: ubuntu-latest
+    outputs:
+      HEAD_MESSAGE: ${{ env.HEAD_COMMIT_MESSAGE }}
+    steps:
+      - run: echo "null"
+
+  build:
+    if: ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }}
+    runs-on: ubuntu-latest
+    needs: prepare-head-message
     outputs:
       ANSIBLE_FILES: ${{ steps.listo_files.outputs.ANSIBLE_FILES }}
     permissions:
@@ -31,7 +40,7 @@ jobs:
         with:
           token: ${{ env.MYGH_TOKEN }}
       - name: Login to DockerHub
-        uses: redhat-actions/podman-login@v1
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1
         with:
           username: ${{ env.REGISTRY_USER }}
           password: ${{ env.REGISTRY_PASSWORD }}
@@ -62,10 +71,10 @@ jobs:
 
   test_deploy_linux:
     if: |
-      ${{ ! startsWith(github.event.head_commit.message, 'Merge branch ') }} &&
+      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
-    needs: build
+    needs: [prepare-head-message, build]
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -73,7 +82,7 @@ jobs:
           repository: ${{ github.actor }}/pub-labs-linux-auto
           token: ${{ env.MYGH_TOKEN }}
       - name: Login to DockerHub
-        uses: redhat-actions/podman-login@v1
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1
         with:
           username: ${{ env.REGISTRY_USER }}
           password: ${{ env.REGISTRY_PASSWORD }}
@@ -108,10 +117,10 @@ jobs:
 
   test_deploy_simulator:
     if: |
-      ${{ ! startsWith(github.event.head_commit.message, 'Merge branch ') }} &&
+      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
-    needs: build
+    needs: [prepare-head-message, build]
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -119,7 +128,7 @@ jobs:
           repository: ${{ github.actor }}/pub-labs-simulator-auto
           token: ${{ env.MYGH_TOKEN }}
       - name: Login to DockerHub
-        uses: redhat-actions/podman-login@v1
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1
         with:
           username: ${{ env.REGISTRY_USER }}
           password: ${{ env.REGISTRY_PASSWORD }}
@@ -154,10 +163,10 @@ jobs:
 
   test_deploy_snapshots:
     if: |
-      ${{ ! startsWith(github.event.head_commit.message, 'Merge branch ') }} &&
+      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
-    needs: build
+    needs: [prepare-head-message, build]
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -165,7 +174,7 @@ jobs:
           repository: ${{ github.actor }}/pub-labs-snapshots-auto
           token: ${{ env.MYGH_TOKEN }}
       - name: Login to DockerHub
-        uses: redhat-actions/podman-login@v1
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1
         with:
           username: ${{ env.REGISTRY_USER }}
           password: ${{ env.REGISTRY_PASSWORD }}
@@ -200,10 +209,10 @@ jobs:
 
   test_deploy_em7lic:
     if: |
-      ${{ ! startsWith(github.event.head_commit.message, 'Merge branch ') }} &&
+      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
-    needs: build
+    needs: [prepare-head-message, build]
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -211,7 +220,7 @@ jobs:
           repository: ${{ github.actor }}/pub-labs-em7lic-auto
           token: ${{ env.MYGH_TOKEN }}
       - name: Login to DockerHub
-        uses: redhat-actions/podman-login@v1
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1
         with:
           username: ${{ env.REGISTRY_USER }}
           password: ${{ env.REGISTRY_PASSWORD }}
@@ -246,10 +255,10 @@ jobs:
 
   test_deploy_cms_build:
     if: |
-      ${{ ! startsWith(github.event.head_commit.message, 'Merge branch ') }} &&
+      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
       needs.build.outputs.ANSIBLE_FILES != ''
     runs-on: ubuntu-latest
-    needs: build
+    needs: [prepare-head-message, build]
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -257,7 +266,7 @@ jobs:
           repository: ${{ github.actor }}/pub-cms-build-auto
           token: ${{ env.MYGH_TOKEN }}
       - name: Login to DockerHub
-        uses: redhat-actions/podman-login@v1
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1
         with:
           username: ${{ env.REGISTRY_USER }}
           password: ${{ env.REGISTRY_PASSWORD }}
@@ -293,7 +302,7 @@ jobs:
   create_release:
     if: |
       always() &&
-      ${{ ! startsWith(github.event.head_commit.message, 'Merge branch ') }} &&
+      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
       needs.build.result == 'success' &&
       (needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped') &&
       (needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped') &&
@@ -301,7 +310,7 @@ jobs:
       (needs.test_deploy_em7lic.result == 'success' || needs.test_deploy_em7lic.result == 'skipped') &&
       (needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped')
     runs-on: ubuntu-latest
-    needs: [test_deploy_linux, test_deploy_simulator, test_deploy_snapshots, test_deploy_em7lic, test_deploy_cms_build]
+    needs: [prepare-head-message, test_deploy_linux, test_deploy_simulator, test_deploy_snapshots, test_deploy_em7lic, test_deploy_cms_build]
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -347,7 +356,7 @@ jobs:
           fi
       - name: Merge release/${{ steps.nt.outputs.next-tag }} into master
         run: |
-          git merge release/${{ steps.nt.outputs.next-tag }} --allow-unrelated-histories -X theirs
+          git merge --no-ff release/${{ steps.nt.outputs.next-tag }} --allow-unrelated-histories -X theirs
       - name: Create New Tag
         run: |
           git tag -a ${{ steps.nt.outputs.next-tag }} -m "Create release tag ${{ steps.nt.outputs.next-tag }}"
@@ -360,7 +369,7 @@ jobs:
           git checkout develop
       - name: Merge master into develop
         run: |
-          git merge master
+          git merge --no-ff master
       - name: Push develop Branch To Remote Repo
         run: |
           git push origin develop
