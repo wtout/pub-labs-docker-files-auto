@@ -64,7 +64,12 @@ jobs:
           for file in ${{ steps.listo_files.outputs.PYTHON_FILES }}${{ steps.listo_files.outputs.ANSIBLE_FILES }}
           do
             read -r PRODUCT VERSION <<<$(basename $file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
-            podman build . --file $file --tag ${PRODUCT}
+            if [[ ${PRODUCT,,} =~ python ]]
+            then
+              podman build --build-arg PYVERSION=$(echo ${VERSION}) . --file $file --tag ${PRODUCT}
+            else
+              podman build --build-arg ANSVERSION=$(echo ${VERSION}) . --file $file --tag ${PRODUCT}
+            fi
             podman tag ${PRODUCT} ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
             podman push ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
           done
