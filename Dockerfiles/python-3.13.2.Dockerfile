@@ -3,9 +3,9 @@ FROM ubuntu:noble
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-ENV PYVERSION=3.13.2
+ARG PYVERSION
 
-LABEL version="0.1"
+LABEL python-version=${PYVERSION}
 LABEL description="This is a custom Docker image for Python ${PYVERSION} on Ubuntu 24.04 LTS"
 
 RUN apt-get update && \
