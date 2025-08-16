@@ -6,7 +6,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV PYVERSION=3.13.1
 
 LABEL version="0.1"
-LABEL description="This is a custom Docker image for Python ${PYVERSION} on Ubuntu 24.04 LTS"
+LABEL description="This is a custom Docker container image for Python ${PYVERSION} on Ubuntu 24.04 LTS"
 
 RUN apt-get update && \
 	apt-get install -y apt-utils && \
