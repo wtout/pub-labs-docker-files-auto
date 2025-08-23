@@ -33,6 +33,8 @@ jobs:
       ANSIBLE_FILES: ${{ steps.listo_files.outputs.ANSIBLE_FILES }}
       PYTHON_FILES_LENGTH: ${{ steps.listo_files.outputs.PYTHON_FILES_LENGTH }}
       ANSIBLE_FILES_LENGTH: ${{ steps.listo_files.outputs.ANSIBLE_FILES_LENGTH }}
+      run_build_python: ${{ steps.listo_files.outputs.run_build_python }}
+      run_build_ansible: ${{ steps.listo_files.outputs.run_build_ansible }}
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -48,22 +50,31 @@ jobs:
           PYTHON_FILES=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -i python | jq -R -s -c 'split("\n")'[:-1])
           # Get Ansible files
           ANSIBLE_FILES=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -i ansible | jq -R -s -c 'split("\n")'[:-1])
+          PYTHON_FILES_LENGTH=$(echo ${PYTHON_FILES} | jq '. | length')
+          ANSIBLE_FILES_LENGTH=$(echo ${ANSIBLE_FILES} | jq '. | length')
+          run_build_python=$([[ ${PYTHON_FILES_LENGTH} -gt 0 ]] && echo 'true' || echo 'false')
+          run_build_ansible=$([[ ${ANSIBLE_FILES_LENGTH} -gt 0 ]] && echo 'true' || echo 'false')
           echo -e "Python Files are ${PYTHON_FILES}"
-          echo -e "Python Files length $(echo ${PYTHON_FILES} | jq '. | length')"
+          echo -e "Python Files length ${PYTHON_FILES_LENGTH}"
+          echo -e "Run Build Python ${run_build_python}"
           echo -e "Ansible Files are ${ANSIBLE_FILES}"
-          echo -e "Ansible Files $(echo ${ANSIBLE_FILES} | jq '. | length')"
+          echo -e "Ansible Files ${ANSIBLE_FILES_LENGTH}"
+          echo -e "Run Build Ansible ${run_build_ansible}"
+
           echo "PYTHON_FILES=${PYTHON_FILES}" >> $GITHUB_OUTPUT
-          echo "PYTHON_FILES_LENGTH=$(echo ${PYTHON_FILES} | jq '. | length')" >> $GITHUB_OUTPUT
+          echo "PYTHON_FILES_LENGTH=${PYTHON_FILES_LENGTH}" >> $GITHUB_OUTPUT
+          echo "run_build_python=${run_build_python}" >> $GITHUB_OUTPUT
           echo "ANSIBLE_FILES=${ANSIBLE_FILES}" >> $GITHUB_OUTPUT
-          echo "ANSIBLE_FILES_LENGTH=$(echo ${ANSIBLE_FILES} | jq '. | length')" >> $GITHUB_OUTPUT
+          echo "ANSIBLE_FILES_LENGTH=${ANSIBLE_FILES_LENGTH}" >> $GITHUB_OUTPUT
+          echo "run_build_ansible=${run_build_ansible}" >> $GITHUB_OUTPUT
 
   build_python:
-    if: ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') && needs.get_changed_files.outputs.PYTHON_FILES_LENGTH > 0 }}
+    if: needs.get_changed_files.outputs.run_build_python == 'true'
     runs-on: ubuntu-latest
     needs: [prepare-head-message, get_changed_files]
     strategy:
       matrix:
-        py_img: ${{ fromJson(needs.get_changed_files.outputs.PYTHON_FILES || '["none"]') }}
+        py_img: ${{ fromJson(needs.get_changed_files.outputs.PYTHON_FILES) }}
     permissions:
       id-token: write
       contents: read
@@ -89,12 +100,14 @@ jobs:
           podman push ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
 
   build_ansible:
-    if: ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') && needs.get_changed_files.outputs.ANSIBLE_FILES_LENGTH > 0 }}
+    if: |
+      needs.get_changed_files.outputs.run_build_ansible == 'true' &&
+      (needs.build_python.result == 'success' || needs.build_python.result == 'skipped')
     runs-on: ubuntu-latest
     needs: [prepare-head-message, get_changed_files, build_python]
     strategy:
       matrix:
-        an_img: ${{ fromJson(needs.get_changed_files.outputs.ANSIBLE_FILES || '["none"]') }}
+        an_img: ${{ fromJson(needs.get_changed_files.outputs.ANSIBLE_FILES) }}
     permissions:
       id-token: write
       contents: read
@@ -121,8 +134,7 @@ jobs:
 
   test_deploy_linux:
     if: |
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.get_changed_files.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.run_build_ansible == 'true'
     runs-on: ubuntu-latest
     needs: [prepare-head-message, get_changed_files, build_ansible]
     strategy:
@@ -169,8 +181,7 @@ jobs:
 
   test_deploy_simulator:
     if: |
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.get_changed_files.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.run_build_ansible == 'true'
     runs-on: ubuntu-latest
     needs: [prepare-head-message, get_changed_files, build_ansible]
     strategy:
@@ -217,8 +228,7 @@ jobs:
 
   test_deploy_snapshots:
     if: |
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.get_changed_files.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.run_build_ansible == 'true'
     runs-on: ubuntu-latest
     needs: [prepare-head-message, get_changed_files, build_ansible]
     strategy:
@@ -265,8 +275,7 @@ jobs:
 
   test_deploy_em7lic:
     if: |
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.get_changed_files.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.run_build_ansible == 'true'
     runs-on: ubuntu-latest
     needs: [prepare-head-message, get_changed_files, build_ansible]
     strategy:
@@ -314,7 +323,7 @@ jobs:
   test_deploy_cms_build:
     if: |
       ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.get_changed_files.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.ANSIBLE_FILES_LENGTH > 0
     runs-on: ubuntu-latest
     needs: [prepare-head-message, get_changed_files, build_ansible]
     strategy:
@@ -359,17 +368,50 @@ jobs:
           sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
           bash -x Bash/play_deploy.sh --envname cust_build_info --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
 
+  check_job:
+    if: |
+      ${{ always() }}
+    runs-on: ubuntu-latest
+    needs: [prepare-head-message, build_python, build_ansible, test_deploy_linux, test_deploy_simulator, test_deploy_snapshots, test_deploy_em7lic, test_deploy_cms_build]
+    steps:
+      - run: |
+          echo "build_python result ${{ needs.build_python.result }}"
+          echo "build_ansible result ${{ needs.build_ansible.result }}"
+          echo "test_deploy_linux result ${{ needs.test_deploy_linux.result }}"
+          echo "test_deploy_simulator result ${{ needs.test_deploy_simulator.result }}"
+          echo "test_deploy_snapshots result ${{ needs.test_deploy_snapshots.result }}"
+          echo "test_deploy_em7lic result ${{ needs.test_deploy_em7lic.result }}"
+          echo "test_deploy_cms_build result ${{ needs.test_deploy_cms_build.result }}"
+      - run: |
+          echo "${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }}"
+          echo "${{ needs.build_python.result == 'success' || needs.build_python.result == 'skipped' }}"
+          echo "${{ needs.build_ansible.result == 'success' || needs.build_ansible.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_snapshots.result == 'success' || needs.test_deploy_snapshots.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_em7lic.result == 'success' || needs.test_deploy_em7lic.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped' }}"
+      - run: |
+          echo "${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') &&
+          (needs.build_python.result == 'success' || needs.build_python.result == 'skipped') &&
+          (needs.build_ansible.result == 'success' || needs.build_ansible.result == 'skipped') &&
+          (needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped') &&
+          (needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped') &&
+          (needs.test_deploy_snapshots.result == 'success' || needs.test_deploy_snapshots.result == 'skipped') &&
+          (needs.test_deploy_em7lic.result == 'success' || needs.test_deploy_em7lic.result == 'skipped') &&
+          (needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped') }}"
+
   create_release:
     if: |
-      always() &&
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
+      ${{ always() &&
+      ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') &&
       (needs.build_python.result == 'success' || needs.build_python.result == 'skipped') &&
-      (needs.build_ansible.result == success || needs.build_ansible.result == 'skipped') &&
+      (needs.build_ansible.result == 'success' || needs.build_ansible.result == 'skipped') &&
       (needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped') &&
       (needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped') &&
       (needs.test_deploy_snapshots.result == 'success' || needs.test_deploy_snapshots.result == 'skipped') &&
       (needs.test_deploy_em7lic.result == 'success' || needs.test_deploy_em7lic.result == 'skipped') &&
-      (needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped')
+      (needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped') }}
     runs-on: ubuntu-latest
     needs: [prepare-head-message, build_python, build_ansible, test_deploy_linux, test_deploy_simulator, test_deploy_snapshots, test_deploy_em7lic, test_deploy_cms_build]
     steps:
