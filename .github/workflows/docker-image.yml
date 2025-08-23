@@ -24,12 +24,57 @@ jobs:
     steps:
       - run: echo "null"
 
-  build:
-    if: ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }}
+  get_changed_files:
     runs-on: ubuntu-latest
     needs: prepare-head-message
+    if: ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }}
     outputs:
+      PYTHON_FILES: ${{ steps.listo_files.outputs.PYTHON_FILES }}
       ANSIBLE_FILES: ${{ steps.listo_files.outputs.ANSIBLE_FILES }}
+      PYTHON_FILES_LENGTH: ${{ steps.listo_files.outputs.PYTHON_FILES_LENGTH }}
+      ANSIBLE_FILES_LENGTH: ${{ steps.listo_files.outputs.ANSIBLE_FILES_LENGTH }}
+      run_build_python: ${{ steps.listo_files.outputs.run_build_python }}
+      run_build_ansible: ${{ steps.listo_files.outputs.run_build_ansible }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ env.MYGH_TOKEN }}
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v37
+      - name: Get list of files
+        id: listo_files
+        run: |
+          # Get Python files
+          PYTHON_FILES=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -i python | jq -R -s -c 'split("\n")'[:-1])
+          # Get Ansible files
+          ANSIBLE_FILES=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -i ansible | jq -R -s -c 'split("\n")'[:-1])
+          PYTHON_FILES_LENGTH=$(echo ${PYTHON_FILES} | jq '. | length')
+          ANSIBLE_FILES_LENGTH=$(echo ${ANSIBLE_FILES} | jq '. | length')
+          run_build_python=$([[ ${PYTHON_FILES_LENGTH} -gt 0 ]] && echo 'true' || echo 'false')
+          run_build_ansible=$([[ ${ANSIBLE_FILES_LENGTH} -gt 0 ]] && echo 'true' || echo 'false')
+          echo -e "Python Files are ${PYTHON_FILES}"
+          echo -e "Python Files length ${PYTHON_FILES_LENGTH}"
+          echo -e "Run Build Python ${run_build_python}"
+          echo -e "Ansible Files are ${ANSIBLE_FILES}"
+          echo -e "Ansible Files ${ANSIBLE_FILES_LENGTH}"
+          echo -e "Run Build Ansible ${run_build_ansible}"
+
+          echo "PYTHON_FILES=${PYTHON_FILES}" >> $GITHUB_OUTPUT
+          echo "PYTHON_FILES_LENGTH=${PYTHON_FILES_LENGTH}" >> $GITHUB_OUTPUT
+          echo "run_build_python=${run_build_python}" >> $GITHUB_OUTPUT
+          echo "ANSIBLE_FILES=${ANSIBLE_FILES}" >> $GITHUB_OUTPUT
+          echo "ANSIBLE_FILES_LENGTH=${ANSIBLE_FILES_LENGTH}" >> $GITHUB_OUTPUT
+          echo "run_build_ansible=${run_build_ansible}" >> $GITHUB_OUTPUT
+
+  build_python:
+    runs-on: ubuntu-latest
+    needs: [prepare-head-message, get_changed_files]
+    if: needs.get_changed_files.outputs.run_build_python == 'true'
+    strategy:
+      matrix:
+        py_img: ${{ fromJson(needs.get_changed_files.outputs.PYTHON_FILES) }}
     permissions:
       id-token: write
       contents: read
@@ -45,41 +90,56 @@ jobs:
           username: ${{ env.REGISTRY_USER }}
           password: ${{ env.REGISTRY_PASSWORD }}
           registry: ${{ env.IMAGE_REGISTRY }}
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v37
-      - name: Get list of files
-        id: listo_files
+      - name: Build the Python image
+        env:
+          img_file: ${{ matrix.py_img }}
         run: |
-          # Get Python files
-          PYTHON_FILES=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -i python | tr '\n' ' ')
-          # Get Ansible files
-          ANSIBLE_FILES=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -i ansible | tr '\n' ' ')
-          echo -e "Python Files are ${PYTHON_FILES}"
-          echo -e "Ansible Files are ${ANSIBLE_FILES}"
-          echo "PYTHON_FILES=${PYTHON_FILES}" >> $GITHUB_OUTPUT
-          echo "ANSIBLE_FILES=${ANSIBLE_FILES}" >> $GITHUB_OUTPUT
-      - name: Build the Docker image
+          read -r PRODUCT VERSION <<<$(basename $img_file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
+          podman build --build-arg PYVERSION=$(echo ${VERSION}) . --file $img_file --tag ${PRODUCT}
+          podman tag ${PRODUCT} ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
+          podman push ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
+
+  build_ansible:
+    runs-on: ubuntu-latest
+    needs: [prepare-head-message, get_changed_files, build_python]
+    if: |
+      needs.get_changed_files.outputs.run_build_ansible == 'true' &&
+      (needs.build_python.result == 'success' || needs.build_python.result == 'skipped')
+    strategy:
+      matrix:
+        an_img: ${{ fromJson(needs.get_changed_files.outputs.ANSIBLE_FILES) }}
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ env.MYGH_TOKEN }}
+      - name: Login to DockerHub
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1
+        with:
+          username: ${{ env.REGISTRY_USER }}
+          password: ${{ env.REGISTRY_PASSWORD }}
+          registry: ${{ env.IMAGE_REGISTRY }}
+      - name: Build the Ansible image
+        env:
+          img_file: ${{ matrix.an_img }}
         run: |
-          for file in ${{ steps.listo_files.outputs.PYTHON_FILES }}${{ steps.listo_files.outputs.ANSIBLE_FILES }}
-          do
-            read -r PRODUCT VERSION <<<$(basename $file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
-            if [[ ${PRODUCT,,} =~ python ]]
-            then
-              podman build --build-arg PYVERSION=$(echo ${VERSION}) . --file $file --tag ${PRODUCT}
-            else
-              podman build --build-arg ANSVERSION=$(echo ${VERSION}) . --file $file --tag ${PRODUCT}
-            fi
-            podman tag ${PRODUCT} ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
-            podman push ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
-          done
+          read -r PRODUCT VERSION <<<$(basename $img_file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
+          podman build --build-arg ANSVERSION=$(echo ${VERSION}) . --file $img_file --tag ${PRODUCT}
+          podman tag ${PRODUCT} ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
+          podman push ${{ env.IMAGE_REGISTRY }}/${{ env.ORG_NAME }}/${PRODUCT}:${VERSION}
 
   test_deploy_linux:
+    needs: [prepare-head-message, get_changed_files, build_ansible]
     if: |
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.build.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.run_build_ansible == 'true'
     runs-on: ubuntu-latest
-    needs: [prepare-head-message, build]
+    strategy:
+      matrix:
+        an_img: ${{ fromJson(needs.get_changed_files.outputs.ANSIBLE_FILES) }}
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -111,21 +171,22 @@ jobs:
         run: |
           mkdir -p ${HOME}/certificates
       - name: Run Test
+        env:
+          img_file: ${{ matrix.an_img }}
         run: |
           echo 'export MYINVOKER=github' >> ~/.bashrc
-          for file in ${{ needs.build.outputs.ANSIBLE_FILES }}
-          do
-            read -r PRODUCT VERSION <<<$(basename $file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
-            sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
-            bash -x Bash/play_deploy.sh --envname build_def_file --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
-          done
+          read -r PRODUCT VERSION <<<$(basename $img_file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
+          sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
+          bash -x Bash/play_deploy.sh --envname build_def_file --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
 
   test_deploy_simulator:
+    needs: [prepare-head-message, get_changed_files, build_ansible]
     if: |
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.build.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.run_build_ansible == 'true'
     runs-on: ubuntu-latest
-    needs: [prepare-head-message, build]
+    strategy:
+      matrix:
+        an_img: ${{ fromJson(needs.get_changed_files.outputs.ANSIBLE_FILES) }}
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -157,21 +218,22 @@ jobs:
         run: |
           mkdir -p ${HOME}/certificates
       - name: Run Test
+        env:
+          img_file: ${{ matrix.an_img }}
         run: |
           echo 'export MYINVOKER=github' >> ~/.bashrc
-          for file in ${{ needs.build.outputs.ANSIBLE_FILES }}
-          do
-            read -r PRODUCT VERSION <<<$(basename $file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
-            sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
-            bash -x Bash/play_deploy.sh --envname build_def_file --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
-          done
+          read -r PRODUCT VERSION <<<$(basename $img_file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
+          sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
+          bash -x Bash/play_deploy.sh --envname build_def_file --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
 
   test_deploy_snapshots:
+    needs: [prepare-head-message, get_changed_files, build_ansible]
     if: |
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.build.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.run_build_ansible == 'true'
     runs-on: ubuntu-latest
-    needs: [prepare-head-message, build]
+    strategy:
+      matrix:
+        an_img: ${{ fromJson(needs.get_changed_files.outputs.ANSIBLE_FILES) }}
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -203,21 +265,22 @@ jobs:
         run: |
           mkdir -p ${HOME}/certificates
       - name: Run Test
+        env:
+          img_file: ${{ matrix.an_img }}
         run: |
           echo 'export MYINVOKER=github' >> ~/.bashrc
-          for file in ${{ needs.build.outputs.ANSIBLE_FILES }}
-          do
-            read -r PRODUCT VERSION <<<$(basename $file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
-            sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
-            bash -x Bash/play_deploy.sh --envname build_def_file --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
-          done
+          read -r PRODUCT VERSION <<<$(basename $img_file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
+          sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
+          bash -x Bash/play_deploy.sh --envname build_def_file --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
 
   test_deploy_em7lic:
+    needs: [prepare-head-message, get_changed_files, build_ansible]
     if: |
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.build.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.run_build_ansible == 'true'
     runs-on: ubuntu-latest
-    needs: [prepare-head-message, build]
+    strategy:
+      matrix:
+        an_img: ${{ fromJson(needs.get_changed_files.outputs.ANSIBLE_FILES) }}
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -249,21 +312,23 @@ jobs:
         run: |
           mkdir -p ${HOME}/certificates
       - name: Run Test
+        env:
+          img_file: ${{ matrix.an_img }}
         run: |
           echo 'export MYINVOKER=github' >> ~/.bashrc
-          for file in ${{ needs.build.outputs.ANSIBLE_FILES }}
-          do
-            read -r PRODUCT VERSION <<<$(basename $file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
-            sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
-            bash -x Bash/play_deploy.sh --envname build_def_file --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
-          done
+          read -r PRODUCT VERSION <<<$(basename $img_file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
+          sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
+          bash -x Bash/play_deploy.sh --envname build_def_file --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
 
   test_deploy_cms_build:
+    needs: [prepare-head-message, get_changed_files, build_ansible]
     if: |
       ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.build.outputs.ANSIBLE_FILES != ''
+      needs.get_changed_files.outputs.ANSIBLE_FILES_LENGTH > 0
     runs-on: ubuntu-latest
-    needs: [prepare-head-message, build]
+    strategy:
+      matrix:
+        an_img: ${{ fromJson(needs.get_changed_files.outputs.ANSIBLE_FILES) }}
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -295,27 +360,63 @@ jobs:
         run: |
           mkdir -p ${HOME}/certificates
       - name: Run Test
+        env:
+          img_file: ${{ matrix.an_img }}
         run: |
           echo 'export MYINVOKER=github' >> ~/.bashrc
-          for file in ${{ needs.build.outputs.ANSIBLE_FILES }}
-          do
-            read -r PRODUCT VERSION <<<$(basename $file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
-            sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
-            bash -x Bash/play_deploy.sh --envname cust_build_info --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
-          done
+          read -r PRODUCT VERSION <<<$(basename $img_file | sed -e 's|^\(.*\)-\(.*\)\.Dockerfile|\1 \2|')
+          sed -i "s/^\(ANSIBLE_VERSION=\).*$/\1'${VERSION}'/" Bash/common_parameters.sh
+          bash -x Bash/play_deploy.sh --envname cust_build_info --skip-tags $(grep -r ' tags:' roles/ | awk -F 'tags: ' '{print $NF}' | sed "s/\[\|\]\|'\|,//g" | tr ' ' '\n' | grep -ve 'always\|never\|define_inventory' | sort -u | xargs | tr ' ' ',')
+
+  check_job:
+    if: |
+      ${{ always() }}
+    runs-on: ubuntu-latest
+    needs: [prepare-head-message, build_python, build_ansible, test_deploy_linux, test_deploy_simulator, test_deploy_snapshots, test_deploy_em7lic, test_deploy_cms_build]
+    steps:
+      - run: |
+          echo "build_python result ${{ needs.build_python.result }}"
+          echo "build_ansible result ${{ needs.build_ansible.result }}"
+          echo "test_deploy_linux result ${{ needs.test_deploy_linux.result }}"
+          echo "test_deploy_simulator result ${{ needs.test_deploy_simulator.result }}"
+          echo "test_deploy_snapshots result ${{ needs.test_deploy_snapshots.result }}"
+          echo "test_deploy_em7lic result ${{ needs.test_deploy_em7lic.result }}"
+          echo "test_deploy_cms_build result ${{ needs.test_deploy_cms_build.result }}"
+      - run: |
+          echo "${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }}"
+          echo "${{ needs.build_python.result == 'success' || needs.build_python.result == 'skipped' }}"
+          echo "${{ needs.build_ansible.result == 'success' || needs.build_ansible.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_snapshots.result == 'success' || needs.test_deploy_snapshots.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_em7lic.result == 'success' || needs.test_deploy_em7lic.result == 'skipped' }}"
+          echo "${{ needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped' }}"
+      - run: |
+          echo "${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') &&
+          (needs.build_python.result == 'success' || needs.build_python.result == 'skipped') &&
+          (needs.build_ansible.result == 'success' || needs.build_ansible.result == 'skipped') &&
+          (needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped') &&
+          (needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped') &&
+          (needs.test_deploy_snapshots.result == 'success' || needs.test_deploy_snapshots.result == 'skipped') &&
+          (needs.test_deploy_em7lic.result == 'success' || needs.test_deploy_em7lic.result == 'skipped') &&
+          (needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped') }}"
+      - run: |
+          echo "${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') &&
+          (needs.*.result == 'success' || needs.*.result == 'skipped') }}"
 
   create_release:
     if: |
-      always() &&
-      ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') }} &&
-      needs.build.result == 'success' &&
+      ${{ always() &&
+      ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') &&
+      (needs.build_python.result == 'success' || needs.build_python.result == 'skipped') &&
+      (needs.build_ansible.result == 'success' || needs.build_ansible.result == 'skipped') &&
       (needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped') &&
       (needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped') &&
       (needs.test_deploy_snapshots.result == 'success' || needs.test_deploy_snapshots.result == 'skipped') &&
       (needs.test_deploy_em7lic.result == 'success' || needs.test_deploy_em7lic.result == 'skipped') &&
-      (needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped')
+      (needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped') }}
     runs-on: ubuntu-latest
-    needs: [prepare-head-message, test_deploy_linux, test_deploy_simulator, test_deploy_snapshots, test_deploy_em7lic, test_deploy_cms_build]
+    needs: [prepare-head-message, build_python, build_ansible, test_deploy_linux, test_deploy_simulator, test_deploy_snapshots, test_deploy_em7lic, test_deploy_cms_build]
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
