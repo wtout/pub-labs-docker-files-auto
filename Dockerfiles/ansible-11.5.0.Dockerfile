@@ -9,7 +9,7 @@ ARG PYVERSION
 LABEL maintainer='Wassim Tout'
 LABEL ansible-version=${ANSVERSION}
 LABEL python-version=${PYVERSION}
-LABEL description="This is a custom Docker image for Ansible ${ANSVERSION} on Ubuntu 24.04 LTS using Python ${PYVERSION}"
+LABEL description="This is a custom container image for Ansible ${ANSVERSION} on Ubuntu 24.04 LTS using Python ${PYVERSION}"
 
 RUN useradd -m -d /home/ansible -s /bin/bash ansible && \
     echo "\n%ansible        ALL=(ALL)       NOPASSWD: ALL" >> /etc/sudoers
