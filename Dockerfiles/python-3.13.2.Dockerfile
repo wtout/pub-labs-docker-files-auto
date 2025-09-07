@@ -7,7 +7,7 @@ ARG PYVERSION
 
 LABEL maintainer='Wassim Tout'
 LABEL python-version=${PYVERSION}
-LABEL description="This is a custom Docker image for Python ${PYVERSION} on Ubuntu 24.04 LTS"
+LABEL description="This is a custom Docker container image for Python ${PYVERSION} on Ubuntu 24.04 LTS"
 
 # Set up locale
 RUN apt-get update && \

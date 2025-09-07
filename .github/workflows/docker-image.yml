@@ -370,18 +370,6 @@ jobs:
     outputs:
       run_create_release: ${{ steps.release_decision.outputs.run_create_release }}
     steps:
-      - run: |
-          echo ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') &&
-          (needs.*.result == 'success' || needs.*.result == 'skipped') }}
-      - run: |
-          echo ${{ ! startsWith(needs.prepare-head-message.outputs.HEAD_MESSAGE, 'Merge branch ') &&
-          (needs.build_python.result == 'success' || needs.build_python.result == 'skipped') &&
-          (needs.build_ansible.result == 'success' || needs.build_ansible.result == 'skipped') &&
-          (needs.test_deploy_linux.result == 'success' || needs.test_deploy_linux.result == 'skipped') &&
-          (needs.test_deploy_simulator.result == 'success' || needs.test_deploy_simulator.result == 'skipped') &&
-          (needs.test_deploy_snapshots.result == 'success' || needs.test_deploy_snapshots.result == 'skipped') &&
-          (needs.test_deploy_em7lic.result == 'success' || needs.test_deploy_em7lic.result == 'skipped') &&
-          (needs.test_deploy_cms_build.result == 'success' || needs.test_deploy_cms_build.result == 'skipped') }}
       - name: release_decision
         id: release_decision
         run: |
@@ -398,7 +386,6 @@ jobs:
           else
             run_create_release='false'
           fi
-          echo "run_create_release=${run_create_release}"
           echo "run_create_release=${run_create_release}" >> $GITHUB_OUTPUT
 
   create_release:
